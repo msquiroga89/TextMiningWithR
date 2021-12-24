@@ -1,0 +1,145 @@
+---
+title: 'Cap. 1: The tidytext format'
+author: "Macarena Quiroga"
+date: "12/24/2021"
+output: html_document
+---
+
+El concepto clave para esta primera parte es el de **token**, que es una unidad significativa de análisis. Puede ser una palabra, una oración, etc.; lo que se necesite. Luego se presentan los conceptos de *cadena [string]*, *corpus* y *matriz de los términos del documento [document-term matrix]*. 
+
+Primero vamos a trabajar con la forma básica de convertir un texto a formato tidy. Podemos armar un objeto tipo cadena:
+
+```{r}
+text <- c("Because I could not stop for Death -",
+          "He kindly stopped for me -",
+          "The Carriage held but just Ourselves -",
+          "and Immortality")
+text
+```
+
+Podemos convertirlo en un dataframe, agregando una columna que indique los números de líneas:
+```{r}
+library(dplyr)
+text_df <- tibble(line = 1:4, text = text)
+text_df
+```
+
+Una vez que tenemos esto, podemos separar los versos de forma tal que cada fila sea una palabra, sin perder la referencia del orden de los versos. Para eso usamos la función `unnest_tokens()`: el primer argumento es el nombre de la nueva columna que contendrá los tokens, y la segunda es la columna del df de donde hay que tomar los tokens. Se retienen las otras columnas, se borran los signos de puntuación y convierte todas las palabras a minúsculas (esto se puede evitar con `to_lower = FALSE`).
+```{r}
+library(tidytext)
+text_df %>%
+  unnest_tokens(word, text)
+```
+
+## Paquete `janeaustenr`
+
+Este paquete presenta el contenido de las seis novelas de Jane Austen con un formato de una fila por línea de texto. A continuación vamos a agregar un número de línea para no perder registro y vamos a anotar los capítulos. La función `cumsum()` devuelve la suma acumulada de los elementos del objeto numérico que se da como argumento; en este caso, tiene como argumento la detección de una cadena de texto que tenga la cadena "chapter".
+```{r}
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+
+original_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, 
+                                     regex("^chapter [\\divxlc]",
+                                           ignore_case = TRUE)))) %>%
+  ungroup()
+
+original_books
+```
+Ahora sí podemos pasar al formato de una palabra por fila. Esta función viene del paquete [tokenizers](https://github.com/ropensci/tokenizers) que permite tokenizar otras cosas, como líneas, caracteres, párrafos, oraciones, raíces léxicas, etc.
+```{r}
+library(tidytext)
+tidy_books <- original_books %>% 
+  unnest_tokens(word, text)
+```
+
+Se pueden quitar las palabras vacías ("stop words"), como los artículos o preposiciones, que están presente en el dataset `stop_words` dentro del paquete `tidytext`.
+```{r}
+data("stop_words")
+tidy_books <- tidy_books %>% 
+  anti_join(stop_words)
+```
+Ahora podemos contar las palabras más frecuentes:
+```{r}
+tidy_books %>% 
+  count(word, sort = TRUE)
+```
+Y hacer gráficos:
+```{r}
+library(ggplot2)
+tidy_books %>% 
+  count(word, sort = TRUE) %>% 
+  filter(n > 600) %>% 
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col()+
+  labs(y = NULL)
+```
+
+
+## Paquete `gutenbergr`
+
+[Este paquete](https://docs.ropensci.org/gutenbergr/) nos da acceso a todas las obras de dominio público que forman parte del Proyecto Gutenberg, junto con herramientas para descargar libros y con metadata. Ahora vamos a trabajar con cuatro obras de H.G. Wells para contar frecuencias y compararlas entre sí.
+
+```{r}
+library(gutenbergr)
+hgwells <- gutenberg_download(c(35, 36, 5230, 159)) # selecciona el ID
+tidy_hgwells <- hgwells %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_hgwells %>% 
+  count(word, sort = TRUE)
+```
+
+Lo mismo hace con cinco novelas de las hermanas Brontë:
+```{r}
+bronte <- gutenberg_download(c(1260, 768, 969, 9182, 767))
+tidy_bronte <- bronte %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+tidy_bronte %>% 
+  count(word, sort = TRUE)
+```
+Ahora que tenemos estas frecuencias calculadas, podemos compararlas entre las obras:
+```{r}
+library(tidyr)
+frequency <- bind_rows(mutate(tidy_bronte, author = "Brontë Sisters"), # agrega una columna de autor en cada
+                       mutate(tidy_hgwells, author = "H.G. Wells"), 
+                       mutate(tidy_books, author = "Jane Austen")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>% # quita lo que no son palabras (números o símbolos)
+  count(author, word) %>% # cuenta las palabras por autor
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>% # proporción de cada palabra respecto del total de palabras
+  select(-n) %>% 
+  pivot_wider(names_from = author, values_from = proportion) %>%
+  pivot_longer(`Brontë Sisters`:`H.G. Wells`,
+               names_to = "author", values_to = "proportion")
+frequency
+```
+Ahora podemos graficar:
+```{r}
+library(scales)
+ggplot(frequency, aes(x = proportion, y = `Jane Austen`, 
+                      color = abs(`Jane Austen` - proportion))) + # gradiente que indica la proporción
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +# transformación para que se vea mejor
+  scale_y_log10(labels = percent_format()) +# transformación para que se vea mejor
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Jane Austen", x = NULL)
+```
+El gráfico permite ver cómo se relacionan (o no) las palabras entre las obras de estos autores. Esto además se puede cuantificar con correlaciones:
+```{r}
+cor.test(data = frequency[frequency$author == "Brontë Sisters",],
+         ~ proportion + `Jane Austen`)
+cor.test(data = frequency[frequency$author == "H.G. Wells",], 
+         ~ proportion + `Jane Austen`)
+```
+Estos resultados indican que las palabras usadas por las hermanas Brontë correlacionan más con aquellas usadas por Jane Austen, en comparación con HG Wells.
