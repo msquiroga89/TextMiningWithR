@@ -1,0 +1,140 @@
+---
+title: "Sentiment analysis with tidy data"
+author: "Macarena Quiroga"
+date: "12/26/2021"
+output: html_document
+---
+
+Este capítulo es sobre el análisis de opiniones o de sentimiento, y parte de este flujo de trabajo: 
+
+![](https://www.tidytextmining.com/images/tmwr_0201.png)
+
+Para esto, vamos a trabajar con el paquete `sentiments`. Se usan distintos tipos de diccionarios de sentimientos, los cuales asignan valoraciones positivas o negativas a las palabras, además de posibles emociones asociadas a ellas. Algunos utilizan puntajes. Las palabras consideradas *neutrales* no aparecen en estos diccionarios. No se toman en cuenta los determinantes negadores (por ejemplo, "no divertido"); el texto que se va a utilizar más adelante no tiene grandes segmentos de negaciones ni de sarcasmo. Una última cosa a tener en cuenta es que si se analiza un texto de muchos párrafos, es muy probable que la suma total dé cero, por lo cual es mejor analizar oraciones o párrafos.
+
+La función `get_sentiments()` recupera los diccionarios posibles. 
+```{r}
+library(tidytext)
+get_sentiments("afinn")
+get_sentiments("bing")
+get_sentiments("nrc") 
+```
+Cuando se usan estos diccionarios de sentimientos, el sentimiento total de un texto se calcula sumando los puntajes individuales de las distintas palabras que lo contienen. 
+
+## Análisis de sentimiento con `inner_join()`
+
+Para analizar la emocionalidad de uno de los libros, primero filtramos del diccionario las palabras relacionadas con la alegría [joy]. Luego seleccionamos solamente las palabras de un libro ("Emma") y realizamos el análisis de sentimientos con un `inner_join()`.
+```{r}
+library(tidyverse)
+nrc_joy <- get_sentiments("nrc") %>% 
+  filter(sentiment == "joy")
+
+tidy_books %>%
+  filter(book == "Emma") %>%
+  inner_join(nrc_joy) %>%
+  count(word, sort = TRUE)
+```
+
+Vemos acá una lista de las palabras felices más frecuentes. También podemos ver cómo cambia la emocionalidad a lo largo del libro: se cuentan cuántas palabras positivas y negativas hay en cada sección del libro. El operador `%/%` funciona como `floor(x/y)` y entiendo que sirve para identificar secciones de determinada cantidad (en este caso, 80 líneas), con la función `index`. Luego pivotea las columnas para tener los valores positivos y los negativos en columnas separadas y finalmente calcula un valor total:
+
+```{r}
+jane_austen_sentiment <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(book, index = linenumber %/% 80, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  # values_fill indica con qué hay que rellenar una columna si no tiene datos
+  mutate(sentiment = positive - negative)
+```
+
+Una vez que tenemos esto, podemos graficar la evolución:
+```{r}
+ggplot(jane_austen_sentiment, aes(index, sentiment, fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free_x")
+```
+
+# Comparar los diccionarios
+
+Al haber distintos diccionarios, puede ser interesante compararlos para ver cuál se ajusta mejor a los objetivos del trabajo. Vamos a ver cómo cambia el arco narrativo de `Pride and Prejudice` con los tres diccionarios. Seleccionamos las palabras de ese libro y luego usamos `inner_join()` para el cálculo. Como usan distintos métodos (AFINN usa un puntaje entre -5 y 5, mientras que los otros clasifican las palabras entre positivas y negativas de forma binaria), habrá que usar patrones de código distintos.
+
+```{r}
+pride_prejudice <- tidy_books %>% 
+  filter(book == "Pride & Prejudice")
+
+afinn <- pride_prejudice %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  # un valor de sentimiento por cada bloque de 80 líneas
+  mutate(method = "AFINN")
+
+bing_and_nrc <- bind_rows(
+  pride_prejudice %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  pride_prejudice %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  # el puntaje es el conteo de las palabras positivas y las negativas
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+Ahora que ya tenemos este análisis, podemos graficarlos en conjuntos:
+
+```{r}
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+Si bien vemos un patrón similar en los tres diccionarios, los valores absolutos son distintos. ¿Por qué los resultados del NRC son más altos que los demás? Esto se puede analizar mirando el ratio de positividad en los diccionarios:
+
+```{r}
+get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment)
+
+get_sentiments("bing") %>% 
+  count(sentiment)
+```
+Ambos tienen más palabras negativas que positivas, pero el ratio es distinto. Esto va a contribuir al resultado de los análisis que se hagan.
+
+# Palabras positivas y negativas más comunes
+
+Una de las ventajas de tener las palabras clasificadas en positivas y negativas es que permite saber el conteo de las palabras que aportan a cada una de las cantidades.
+
+```{r}
+bing_word_counts <- tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% # solo los primeros diez
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+Lo que vemos es que la palabra "miss" podría referirse a "señorita" y no a "extrañar", así que en el caso de necesitarlo podríamos armar una base de stopwords propia y agregarla:
+
+```{r}
+custom_stop_words <- bind_rows(tibble(word = c("miss"),  
+                                      lexicon = c("custom")), 
+                               stop_words)
+
+custom_stop_words
+```
+
