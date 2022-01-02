@@ -138,3 +138,25 @@ custom_stop_words <- bind_rows(tibble(word = c("miss"),
 custom_stop_words
 ```
 
+# Nubes de palabras
+
+Podemos mirar las palabras más comunes en los libros de Jane Austen, con el paquete `wordcloud`, que se basa en los gráficos de Rbase.
+```{r}
+library(wordcloud)
+
+tidy_books %>%
+  anti_join(custom_stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+La función `comparison.cloud()` te permite ordenar las palabras según uno de los criterios. Para eso hay que convertir la tabla a una matriz con `reshape2::acast()`. El primer argumento es la fórmula según la cual se ordenan los elementos (en este caso, se ordenan las palabras según el tipo de sentimiento), luego `value.var` indica el nombre de la columna donde se encuentran los valores y `fill` es el valor con el cual se llenarán los NA. El tamaño de las palabras es relativo a la frecuencia dentro de su tipo de sentimiento, por lo cual no son comparables entre sí.
+```{r}
+library(reshape2)
+tidy_books %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+```
+
