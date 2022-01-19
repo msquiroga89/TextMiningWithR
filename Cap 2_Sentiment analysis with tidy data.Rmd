@@ -160,3 +160,59 @@ tidy_books %>%
                    max.words = 100)
 ```
 
+# Mirando a unidades más allá de las palabras
+
+Algunos análisis intentan ir más allá de los *unigrams* (palabras) para poder entender oraciones complejas, como "No estoy teniendo un buen día", que es una oración triste gracias a la negación. Paquetes como `coreNLP`, `cleanNLP`, y `sentimentr` hacen este análisis a partir de oraciones. Para esto, vamos a tokenizar el texto con oraciones, creando una nueva columna; como la unidad default para tokenizar es la palabra, en este caso hay que especificarlo con el argumento `token = "sentences"`:
+
+```{r}
+p_and_p_sentences <- tibble(text = prideprejudice) %>% 
+  unnest_tokens(sentences, text, token = "sentences")
+
+p_and_p_sentences$sentences[2]
+```
+Este ejemplo demuestra que pueden aparecer problemas cuando el texto tiene una codificación UTF-8, sobre todo en secciones dialogadas; trabaja mejor cuando está codificado como ASCII. Una opción podría ser usar la función `iconv(text, to = 'latin1')` antes de tokenizar.
+
+```{r}
+p_and_p_sentences <- tibble(text = prideprejudice) %>% 
+  mutate(text = iconv(text, to = 'latin1')) %>% 
+  unnest_tokens(sentences, text, token = "sentences")
+
+p_and_p_sentences$sentences[50]
+```
+
+Acá lo probé, pero no parece haber cambiado mucho (o tal vez yo no termino de entender cuál es el problema y/o cuál debería ser la solución). En fin, sigamos.
+
+Otras unidades para tokenizar pueden ser por ejemplo los capítulos. Para esto podemos usar una regex, para tener un df por cada capítulo:
+
+```{r}
+austen_chapters <- austen_books() %>%
+  group_by(book) %>%
+  unnest_tokens(chapter, text, token = "regex", 
+                pattern = "Chapter|CHAPTER [\\dIVXLC]") %>%
+  ungroup()
+
+austen_chapters %>% 
+  group_by(book) %>% 
+  summarise(chapters = n())
+```
+Con eso tenemos una lista de la cantidad de capítulos que tiene cada libro; cada fila del df `austen_chapters` corresponde a un capítulo. A partir de esto podemos preguntarnos cuáles son los capítulos más tristes. Para eso, primero extraemos todas las palabras negativas del diccionario Bing, luego extraemos las palabras totales de cada capítulo para poder normalizar las extensiones, y finalmente obtenemos la cantidad de palabras negativas de cada capítulo divididas por el total de palabras por capítulo.
+
+```{r}
+bingnegative <- get_sentiments("bing") %>% 
+  filter(sentiment == "negative")
+
+wordcounts <- tidy_books %>% 
+  group_by(book, chapter) %>% 
+  summarise(words = n())
+
+tidy_books %>% 
+  semi_join(bingnegative) %>% # solo las palabras que aparecen en ambos df
+  group_by(book, chapter) %>% 
+  summarise(negativewords = n()) %>%  # cuenta el total de las palabras negativas en cada capítulo
+  left_join(wordcounts, by = c("book", "chapter")) %>% # acá agrega a las líneas de esta df las correspondientes cantidades ya calculadas en el df wordcounts
+  mutate(ratio = negativewords/words) %>% 
+  filter(chapter != 0) %>% 
+  slice_max(ratio, n = 1) %>%  # no termino de entender
+  ungroup()
+```
+
