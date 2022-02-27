@@ -1,0 +1,160 @@
+---
+title: "Cap 4_Relationships between words_n-grams and correlations"
+author: "Macarena Quiroga"
+date: "2/13/2022"
+output: html_document
+---
+
+En este capítulo vamos a ver distintos métodos para calcular y visualizar las relaciones *entre* las palabras del dataset. El token que se usa es **ngrams**, que consiste en pares de palabras adyacentes. Agregamos dos paquetes nuevos: `ggraph`, que extiende `ggplot2`, y `widyr`, que calcula correlaciones apareadas y distancias dentro de un df.
+
+## 4.1 Tokenizando por n-gram
+
+La función `unnest_tokens()` también nos sirve para tokenizar con "n-gram" como unidad, lo cual nos permite ver qué tan seguido la palabra X es seguida por la palabra Y. Especificamos `token = "ngrams"` y `n = 2`, para aclarar que buscamos pares de dos palabras consecutivas:
+
+```{r}
+library(dplyr)
+library(tidytext)
+library(janeaustenr)
+
+austen_bigrams <- austen_books() %>% 
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+```
+
+## 4.2 Contar y filtrar n-grams
+
+Ahora podemos contar cuáles son los bigrams más frecuentes:
+
+```{r}
+austen_bigrams %>% 
+  count(bigram, sort = TRUE)
+```
+
+Lo que vemos es que los bigrams más frecuentes son pares de palabras que no nos interesan, artículos y preposiciones. Para mejorar esto, podemos usar la función `separate()`, que divide una columna en varias; vamos a dividir entre "palabra1" y "palabra2", para remover los casos donde alguna de ellas es una stop-word.
+
+```{r}
+library(tidyr)
+bigrams_separated <- austen_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>% 
+  filter(!word1 %in% stop_words$word) %>% # quedarse con las palabras que no se encuentran en el df de stop_words, en la columna específica de las palabras
+  filter(!word2 %in% stop_words$word)
+
+# contamos de nuevo
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE) # acá cuenta combinaciones de palabras
+```
+
+Si queremos volver a unificar las dos palabras en un bigram, podemos usar `unite()`:
+```{r}
+bigrams_united <- bigrams_filtered %>% 
+  unite(bigram, word1, word2, sep = " ")
+```
+
+Podemos trabajar con trigrams:
+```{r}
+austen_trigrams <- austen_books() %>% 
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>% 
+  separate(trigram, c("word1", "word2", "word3"), sep = " ") %>% 
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word3 %in% stop_words$word) %>% 
+  count(word1, word2, word3, sort = TRUE)
+```
+
+
+## 4.2 Analizando bígramos
+
+Los bígramos nos sirven para hacer análisis exploratorios. Si quisiéramos saber cuáles son las calles más frecuentes, podemos buscar aquel bígramo cuya segunda palabra sea "street":
+```{r}
+bigrams_filtered %>% 
+  filter(word2 == "street") %>% 
+  count(book, word1, sort = TRUE)
+```
+
+Los bígramos también pueden ser utilizados como unidades para análisis como los realizados en el capítulo 3, a partir del cálculo del tf_idf.
+```{r}
+bigram_tf_idf <- bigrams_united %>% 
+  count(book, bigram) %>% 
+  bind_tf_idf(bigram, book, n) %>% 
+  arrange(desc(tf_idf))
+
+library(forcats)
+library(ggplot2)
+
+bigram_tf_idf %>%
+  group_by(book) %>%
+  slice_max(tf_idf, n = 15) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(bigram, tf_idf), fill = book)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~book, ncol = 2, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+El gráfico muestra que los bígramos más usados en cada libro corresponden a los personas más importantes, lo cual indica que el cálculo estuvo bien realizado. Usar bígramos tiene la ventaja de dar más contexto a las palabras más frecuentes, pero tiene la desventaja de que el análisis está más disperso, porque el bígramo más frecuente tiene una frecuencia mucho menor que cualquiera de las dos palabras por separado. Por lo tanto, es un análisis que solo tiene sentido en datasets largos.
+
+En el capítulo 2 hicimos un análisis de sentimiento solamente analizando palabras según su significado positivo o negativo; sin embargo, el contexto de una palabra puede ser tanto o más importante que su presencia. Por ejemplo, las palabras "gusta" y "contento" cuentan como positivas aunque la frase sea "No me gusta y no estoy contento".
+
+Tener los datos organizados en bígramos nos permite ver, por ejemplo, cuántas palabras están emparejadas con la palabra "not":
+```{r}
+bigrams_separated %>% 
+  filter(word1 == "not") %>% 
+  count(word1, word2, sort = TRUE)
+```
+
+Podemos usar esta información para excluir o bien para invertir los puntajes. Vamos a usar el diccionario AFINN, que da valores numéricos para el sentimiento de cada palabra, ya sean números positivos o negativos. Con eso, podemos examinar las palabras más frecuentes que estuvieron precedidas por "not" y que estaban asociadas con un sentimiento.
+```{r}
+AFINN <- get_sentiments("afinn")
+not_words <- bigrams_separated %>% 
+  filter(word1 == "not") %>% 
+  inner_join(AFINN, by = c(word2 = "word")) %>% 
+  count(word2, value, sort = TRUE)
+```
+
+A partir de esto podemos calcular cuántas de estas palabras aportaron a la dirección "opuesta". Para eso, multiplicamos su valor por la cantidad de veces que aparecen.
+```{r}
+not_words %>% 
+  mutate(contribution = n*value) %>% 
+  arrange(desc(abs(contribution))) %>% # en valores absolutos porque hay negativos
+  head(20) %>%  # solo los primeros 20
+  mutate(word2 = reorder(word2, contribution)) %>% 
+  ggplot(aes(contribution, word2, fill = contribution > 0))+
+  geom_col(show.legend = FALSE)+
+  labs(x = "Sentiment value * number of occurrences",
+       y = "Words preceded by \"not\"")
+```
+
+El gráfico nos muestra que los bígramos "not like" y "not help" generaron que el texto pareciera más positivo de lo que era, y frases como "not afraid" y "not fail" lo hicieron parecer más negativo de lo que era.
+
+"Not" no es la única palabra que puede negativizar las palabras que le siguen. Podemos elegir otras cuatro que cumplen esta misma función. Si quisiéramos, podríamos utilizar la misma estrategia que antes para revertir los puntajes de cada palabra.
+```{r}
+negation_words <- c("not", "no", "never", "without")
+negated_words <- bigrams_separated %>% 
+  filter(word1 %in% negation_words) %>% 
+  inner_join(AFINN, by = c(word2 = "word")) %>% 
+  count(word1, word2, value, sort = TRUE)
+```
+
+### 4.1.4 Visualizar una red de bígramos con ggraph
+
+Podemos visualizar la relación entre todas las palabras a partir de una red de puntos conectados. Una red se puede crear a partir de un objeto tidy porque tiene tres variables: el nodo **desde** el cual sale una arista, el nodo **hacia** el cual va la arista, y el **peso**, que es el valor numérico asociado con cada arista.
+
+El paquete `igraph` tiene muchas funciones poderosas para manipular y analizar redes. Una forma de crear un objeto igraph a partir de tidy data es la función `graph_from_data_frame()`, que toma un data frame de aristas con las columnas *from*, *to* y los atributos de la arista (en este caso, *n*).
+```{r}
+library(igraph)
+bigram_graph <- bigram_counts %>% 
+  filter(n > 20) %>% # para filtrar los bígramos más comunes
+  graph_from_data_frame()
+```
+
+Para visualizar esta red, podemos usar el paquete `ggraph`, que usa la misma gramática de gráficos que `ggplot2`. Podemos convertir un objeto igraph en un objeto ggraph con la función `ggraph`; luego, agregamos capas de la misma forma que lo haríamos con `ggplot2`. Por ejemplo, en este caso necesitaríamos agregar tres capas: nodos, aristas y texto.
+```{r}
+library(ggraph)
+set.seed(2017)
+ggraph(bigram_graph, layout = "fr")+
+  geom_edge_link()+
+  geom_node_point()+
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+
