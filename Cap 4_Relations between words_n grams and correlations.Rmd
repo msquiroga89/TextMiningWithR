@@ -158,3 +158,106 @@ ggraph(bigram_graph, layout = "fr")+
   geom_node_text(aes(label = name), vjust = 1, hjust = 1)
 ```
 
+Podemos mejorar la estética del gráfico agregando `edge_alpha` a la capa del link para volverlos transparentes según su grado de rareza. Agregamos direccionalidad con una flecha con `grid::arrow()`, incluyendo la opción `end_cap` que le indica a la flecha que termine antes de tocar el nodo. Modificamos las opciones de la capa del nodo para hacerlos más atractivos (más grandes, de color azul). Finalmente, agregamos un theme que es útil para este tipo de redes, `theme_void()`.
+
+```{r}
+set.seed(2020)
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+ggraph(bigram_graph, layout = "fr")+
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches'))+
+  geom_node_point(color = "lightblue", size = 5)+
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)+
+  theme_void()
+```
+
+Esta es una visualización del tipo **Markov chain**, donde cada elección de palabra depende solo de la palabra previa. En este caso, un generador al azar que use este modelo podría devolver "dear", después "sir" y después "william/walter/thomas/thomas's", agregando a cada palabra la palabra más común que le sigue. Para poder volver interpretable la visualización, elegimos mostrar solamente las conexiones más frecuentes entre palabras, pero uno podría imaginar un gráfico gigantesco que represente todas las conexiones que se dan en el texto.
+
+### 4.1.5 Visualizar bígramos en otros textos
+
+Podemos utilizar todo el trabajo realizado para limpiar y visualizar los bígramos en el dataset de texto para convertirlo en una función que nos permita realizarlo en otro dataset.
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(ggplot2)
+library(igraph)
+library(ggraph)
+
+count_bigrams <- function(dataset){
+  dataset %>% 
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>% 
+    separate(bigram, c("word1", "word2"), sep = " ") %>% 
+    filter(!word1 %in% stop_words$word,
+           !word2 %in% stop_words$word) %>% 
+    count(word1, word2, sort = TRUE)
+}
+
+visualize_bigrams <- function(bigrams){
+  set.seed(2016)
+  a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+  
+  bigrams %>% 
+    graph_from_data_frame() %>% 
+    ggraph(layout = "fr")+
+    geom_edge_link(aes(edge_alpha = n), show.legend = FALSE, arrow = a)+
+    geom_node_point(color = "lightblue", size = 5)+
+    geom_node_text(aes(label = name), vjust = 1, hjust = 1)+
+    theme_void()
+}
+```
+
+Esto nos permite visualizar bígramos en otras obras, como en la versión King James de la Biblia:
+```{r}
+library(gutenbergr)
+kjv <- gutenbergr::gutenberg_download(10)
+
+library(stringr)
+kjv_bigrams <- kjv %>% 
+  count_bigrams()
+
+kjv_bigrams %>% 
+  filter(n > 40,
+         !str_detect(word1, "\\d"),
+         !str_detect(word2, "\\d")) %>% 
+  visualize_bigrams()
+```
+
+## 4.2 Contar y correlacionar pares de palabras con el paquete `widyr`
+
+Tokenizar a partir de n-grams es una buena forma de explorar pares de palabras adyacentes. Sin embargo, también podemos estar interesados en palabras que tienden a co-ocurrir dentro de determinados documentos y capítulos, aunque no aparezcan una al lado de la otra.
+
+Tidy data es una estructura útil para comparar entre variables o agrupaciones de filas, pero puede ser difícil comparar entre filas: por ejemplo, para contar la cantidad de veces que dos palabras aparece dentro del mismo capítulo, o para ver qué tan correlacionadas están. La mayoría de las operaciones para encontrar conteos emparejados o correlaciones necesitan convertir los datos en una matriz ancha [wide] primero.
+
+Vamos a examinar algunas formas en las que se pueden convertir textos tidy en matrices anchas en el capítulo 5, pero en este caso no es necesario. El paquete `widyr` permite realizar operaciones como computar conteos y correlaciones de forma sencilla, simplificando el patrón de "ensanchar los datos, realizar la operación, volver a limpiar los datos". Nos enfocaremos en una serie de funciones que realizan comparaciones emparejadas entre grupos de observaciones (por ejemplo, entre documentos o entre secciones de un mismo texto).
+
+### 4.2.1 Contar y correlacionar entre secciones
+
+Tomemos el libro "Pride and prejudice" dividido en secciones de 10 líneas, como hicimos para el análisis de sentimientos en el Capítulo 2. Podemos estar interesados en qué palabras tienden a aparecer dentro de la misma sección.
+
+```{r}
+austen_section_books <- austen_books() %>% 
+  filter(book == "Pride & Prejudice") %>% 
+  mutate(section = row_number() %/% 10) %>% # %/% significa división de integrales (división completa sin excedentes), por lo que entiendo excluye las primeras 10 líneas 
+  filter(section > 0) %>% 
+  unnest_tokens(word, text) %>% 
+  filter(!word %in% stop_words$word)
+```
+
+Una función útil del paquete `widyr` es `pairwise_count()`. El prefijo `pairwise_` indica que el resultado es una fila por cada par de palabras en la variable `word`. Esto nos permite contar pares comunes de palabras co-apareciendo dentro de la misma sección.
+```{r}
+library(widyr)
+
+# conteo de palabras que co-aparecen dentro de las secciones
+word_pairs <- austen_section_books %>% 
+  pairwise_count(word, section, sort = TRUE)
+```
+
+Por lo tanto, mientras que el input tenía una fila para una sección del documento y una palabra, el output tiene una fila por cada par de palabras. Esto también es un formato tidy, pero con una estructura distinta que nos permitirá responder nuevas preguntas.
+
+Por ejemplo, podemos ver que los pares de palabras más comunes dentro de una sección son "Elizabeth" y "Darcy" (los dos protagonistas). Podemos fácilmente encontrar las palabras que co-ocurren más frecuentemente con Darcy:
+```{r}
+word_pairs %>% 
+  filter(item1 == "darcy")
+```
