@@ -5,6 +5,8 @@ date: "1/19/2022"
 output: html_document
 ---
 
+> Este texto es una traducción adaptada por mí del libro [Text Mining with R](https://www.tidytextmining.com/preface.html) de Julia Silge y David Robinson. 
+
 Una forma de ver el contenido de un documento es a partir de la frecuencia de las palabras, lo que se puede calcular con el **term frequency (tf)**. Una forma de acercarse a este problema es eliminando las *stop words* (artículos, preposiciones, conjunciones). Otra es mirar la **frecuencia inversa del documento (idf)**, que aumenta el peso de las palabras poco frecuentes y disminuye las de aquellas que son muy frecuentes. Esto se combina con la frecuencia de los términos para calcular el **tf-idf** de un término (las dos cantidades multiplicadas), que indica la frecuencia de un término ajustada a la frecuencia general.
 
 El estadístico *tf-idf* intenta calcular la importancia de un término dentro de un documento. Si bien las cuantificaciones en este sentido es útil para la minería de textos, su base teórica no es del todo avalada por los expertos de la teoría de la información. Se puede definir de la siguiente forma: $tf-idf(term)=ln(\frac{n_{documents}}{n_{documents~containing~term}})$.

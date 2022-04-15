@@ -4,6 +4,28 @@ author: "Macarena Quiroga"
 date: "12/26/2021"
 output: html_document
 ---
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidytext)
+data("stop_words")
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+
+original_books <- austen_books() %>%
+  group_by(book) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, 
+                                     regex("^chapter [\\divxlc]",
+                                           ignore_case = TRUE)))) %>%
+  ungroup()
+
+tidy_books <- original_books %>% 
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words)
+
+```
+
+> Este texto es una traducción adaptada por mí del libro [Text Mining with R](https://www.tidytextmining.com/preface.html) de Julia Silge y David Robinson. 
 
 Este capítulo es sobre el análisis de opiniones o de sentimiento, y parte de este flujo de trabajo: 
 
@@ -23,7 +45,7 @@ Cuando se usan estos diccionarios de sentimientos, el sentimiento total de un te
 ## Análisis de sentimiento con `inner_join()`
 
 Para analizar la emocionalidad de uno de los libros, primero filtramos del diccionario las palabras relacionadas con la alegría [joy]. Luego seleccionamos solamente las palabras de un libro ("Emma") y realizamos el análisis de sentimientos con un `inner_join()`.
-```{r}
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 nrc_joy <- get_sentiments("nrc") %>% 
   filter(sentiment == "joy")

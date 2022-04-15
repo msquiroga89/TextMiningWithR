@@ -5,6 +5,8 @@ date: "12/24/2021"
 output: html_document
 ---
 
+> Este texto es una traducción adaptada por mí del libro [Text Mining with R](https://www.tidytextmining.com/preface.html) de Julia Silge y David Robinson. 
+
 El concepto clave para esta primera parte es el de **token**, que es una unidad significativa de análisis. Puede ser una palabra, una oración, etc.; lo que se necesite. Luego se presentan los conceptos de *cadena [string]*, *corpus* y *matriz de los términos del documento [document-term matrix]*. 
 
 Primero vamos a trabajar con la forma básica de convertir un texto a formato tidy. Podemos armar un objeto tipo cadena:

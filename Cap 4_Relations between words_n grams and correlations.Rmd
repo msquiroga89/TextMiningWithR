@@ -5,6 +5,8 @@ date: "2/13/2022"
 output: html_document
 ---
 
+> Este texto es una traducción adaptada por mí del libro [Text Mining with R](https://www.tidytextmining.com/preface.html) de Julia Silge y David Robinson. 
+
 En este capítulo vamos a ver distintos métodos para calcular y visualizar las relaciones *entre* las palabras del dataset. El token que se usa es **ngrams**, que consiste en pares de palabras adyacentes. Agregamos dos paquetes nuevos: `ggraph`, que extiende `ggplot2`, y `widyr`, que calcula correlaciones apareadas y distancias dentro de un df.
 
 ## 4.1 Tokenizando por n-gram
@@ -261,3 +263,59 @@ Por ejemplo, podemos ver que los pares de palabras más comunes dentro de una se
 word_pairs %>% 
   filter(item1 == "darcy")
 ```
+
+### 4.2.2 Correlaciones apareadas
+
+Las coocurrencias de las palabras como "Elizabeth" y "Darcy" no son, de todos modos, muy informativas, porque son las palabras más frecuentes incluso de forma individual. En lugar de eso, podemos examinar las **correlaciones** entre las palabras, lo que indica qué tan frecuentemente aparecen juntas respecto a qué tan frecuentemente aparecen separadas.
+
+En particular, aquí vamos a enfocarnos en el [coeficiente phi](https://en.wikipedia.org/wiki/Phi_coefficient) una medida comúnmente usada en correlaciones binarias. El objetivo del coeficiente phi es mostrar qué tan probable es que **cualquiera de las dos** palabras X e Y aparezcan, o que **ninguna** lo haga, frente a que aparezca una sin la otra. Es equivalente a la **correlación de Pearson**.
+
+La función `pairwise_cor()` de `widyr` nos permite calcular el coeficiente phi entre palabras basado en su frecuencia de aparición en la misma sección. Su sintaxis es parecida a `pairwise_count()`.
+
+```{r}
+# primero filtramos las palabras relativamente frecuentes
+word_cors <- austen_section_books %>% 
+  group_by(word) %>% 
+  filter(n() >= 20) %>% 
+  pairwise_cor(word, section, sort = TRUE)
+
+word_cors
+```
+
+Esta forma de organizar la información nos permite hacer búsquedas específicas, por ejemplo las palabras más correlacionadas con la palabra "pound".
+
+```{r}
+word_cors %>% 
+  filter(item1 == "pounds")
+```
+
+Podemos seleccionar palabras interesantes y buscar con qué palabras suelen asociarse:
+
+```{r}
+word_cors %>% 
+  filter(item1 %in% c("elizabeth", "pounds", "married", "pride")) %>% 
+  group_by(item1) %>% 
+  slice_max(correlation, n = 6) %>% 
+  ungroup() %>% 
+  mutate(item2 = reorder(item2, correlation)) %>% 
+  ggplot(aes(item2, correlation))+
+  geom_bar(stat = "identity")+
+  facet_wrap(~item1, scales = "free")+
+  coord_flip()
+```
+
+Y podemos usar `ggraph` para visualizar las correlaciones y los grupos de palabras que encontramos:
+```{r}
+set.seed(2016)
+word_cors %>% 
+  filter(correlation > .15) %>% 
+  graph_from_data_frame() %>% 
+  ggraph(layout = "fr")+
+  geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE)+
+  geom_node_point(color = "lightblue", size = 5)+
+  geom_node_text(aes(label = name), repel = TRUE)+
+  theme_void()
+
+```
+
+En este gráfico, a diferencia de los análisis de bígramos, las relaciones son simétricas (no hay flechas). Vemos también que, si bien siguen siendo comunes los emparejamientos de nombres y títulos que dominaban los bígramos, aquí aparecen también otros emparejamientos como "walk" y "park".
